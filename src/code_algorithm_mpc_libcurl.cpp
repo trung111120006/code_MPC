@@ -189,7 +189,7 @@ int main()
     }
 
     // Cấu hình streaming
-    string base_url = "https://192.168.101.17:8443/trim_and_convert.sh";
+    string base_url = "https://192.168.137.2:8443/hello.sh";
     vector<string> quality_suffix = {"_low.mp4", "_medium.mp4", "_high.mp4"};
 
     // ===== THAY ĐỔI 4: Băng thông khởi tạo để trống =====
