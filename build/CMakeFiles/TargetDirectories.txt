@@ -1,3 +1,0 @@
-/home/backne/Trung/code/code_mpc/MPC_libcurl/build/CMakeFiles/mpc_streaming.dir
-/home/backne/Trung/code/code_mpc/MPC_libcurl/build/CMakeFiles/edit_cache.dir
-/home/backne/Trung/code/code_mpc/MPC_libcurl/build/CMakeFiles/rebuild_cache.dir

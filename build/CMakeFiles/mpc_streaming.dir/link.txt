@@ -1,1 +1,0 @@
-/usr/bin/c++ CMakeFiles/mpc_streaming.dir/src/code_algorithm_mpc_libcurl.cpp.o -o mpc_streaming  /usr/lib/x86_64-linux-gnu/libcurl.so
