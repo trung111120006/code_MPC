@@ -1,0 +1,5 @@
+./download/segment_001_LOW_dec_GOF0_attribute_rec_1280x1280_8bit_p420.yuv ./download/segment_001_LOW_dec_GOF0_attribute_rec_1280x1280_10bit_p444.rgb 2 0.112101 
+./download/segment_002_HIGH_dec_GOF0_attribute_rec_1280x1280_8bit_p420.yuv ./download/segment_002_HIGH_dec_GOF0_attribute_rec_1280x1280_10bit_p444.rgb 2 0.110799 
+./download/segment_002_HIGH_dec_GOF0_attribute_rec_1280x1280_8bit_p420.yuv ./download/segment_002_HIGH_dec_GOF0_attribute_rec_1280x1280_10bit_p444.rgb 2 0.108201 
+./download/segment_003_HIGH_dec_GOF0_attribute_rec_1280x1280_8bit_p420.yuv ./download/segment_003_HIGH_dec_GOF0_attribute_rec_1280x1280_10bit_p444.rgb 2 0.117899 
+./download/segment_003_HIGH_dec_GOF0_attribute_rec_1280x1280_8bit_p420.yuv ./download/segment_003_HIGH_dec_GOF0_attribute_rec_1280x1280_10bit_p444.rgb 2 0.107464 

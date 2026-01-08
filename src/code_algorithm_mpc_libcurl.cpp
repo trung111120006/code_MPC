@@ -1,9 +1,22 @@
 #include <bits/stdc++.h>
 #include <curl/curl.h>
 #include <sys/stat.h>
+#include <unistd.h>
 using namespace std;
 
-// Callback để ghi dữ liệu download vào buffer (cho đo bandwidth)
+// ============================================================================
+// Configuration - Điều chỉnh theo hệ thống của bạn
+// ============================================================================
+const string DOWNLOAD_DIR = "/home/backne/Trung/code/code_mpc/MPC_libcurl/download";
+const string DECODED_OUTPUT_DIR = "/home/backne/Trung/code/code_mpc/MPC_libcurl/decoded_output";
+
+// Decode options
+const bool DECODE_REALTIME = true;   // true: decode ngay, false: decode sau
+const bool DECODE_BACKGROUND = true; // true: decode background, false: đợi decode xong
+
+// ============================================================================
+// Callback Functions (Giữ nguyên từ code của bạn)
+// ============================================================================
 size_t WriteCallback(void *contents, size_t size, size_t nmemb, void *userp)
 {
     size_t totalSize = size * nmemb;
@@ -12,7 +25,6 @@ size_t WriteCallback(void *contents, size_t size, size_t nmemb, void *userp)
     return totalSize;
 }
 
-// Callback để ghi dữ liệu vào file
 size_t WriteFileCallback(void *contents, size_t size, size_t nmemb, void *userp)
 {
     size_t totalSize = size * nmemb;
@@ -20,19 +32,87 @@ size_t WriteFileCallback(void *contents, size_t size, size_t nmemb, void *userp)
     return fwrite(contents, size, nmemb, fp);
 }
 
+// ============================================================================
+// Utility Functions
+// ============================================================================
+bool file_exists(const string &path)
+{
+    struct stat buffer;
+    return (stat(path.c_str(), &buffer) == 0);
+}
 
+bool create_directory(const string &path)
+{
+    if (file_exists(path))
+        return true;
+    
+    string cmd = "mkdir -p " + path;
+    return system(cmd.c_str()) == 0;
+}
 
-// Hàm lấy extension từ URL hoặc Content-Type
+// ============================================================================
+// Decoder Integration Function - THÊM MỚI
+// ============================================================================
+bool decode_segment_async(const string &bin_file_path, int segment_num, const string &quality_name)
+{
+    cout << "\n┌─────────────────────────────────────────┐" << endl;
+    cout << "│  Starting Decode Process               │" << endl;
+    cout << "└─────────────────────────────────────────┘" << endl;
+    
+    if (!file_exists(bin_file_path))
+    {
+        cerr << "❌ Error: Binary file not found: " << bin_file_path << endl;
+        return false;
+    }
+    
+    // Tạo output directory
+    create_directory(DECODED_OUTPUT_DIR);
+    
+    cout << "📥 Input:  " << bin_file_path << endl;
+    cout << "🔧 Running decode script..." << endl;
+    
+    // Tạo command gọi script decode
+    stringstream cmd;
+    cmd << "./auto_decode.sh"
+        << " \"" << bin_file_path << "\""
+        << " " << segment_num
+        << " \"" << quality_name << "\"";
+    
+    if (DECODE_BACKGROUND)
+    {
+        cmd << " > " << DECODED_OUTPUT_DIR << "/decode_segment_" << segment_num << ".log 2>&1 &";
+        cout << "   (Background mode)" << endl;
+    }
+    else
+    {
+        cmd << " 2>&1 | tee " << DECODED_OUTPUT_DIR << "/decode_segment_" << segment_num << ".log";
+    }
+    
+    int result = system(cmd.str().c_str());
+    
+    if (DECODE_BACKGROUND || result == 0)
+    {
+        cout << "✅ Decode process " << (DECODE_BACKGROUND ? "started" : "completed") << " successfully" << endl;
+        return true;
+    }
+    else
+    {
+        cerr << "❌ Decode failed with exit code: " << result << endl;
+        return false;
+    }
+}
+
+// ============================================================================
+// Original Functions (Giữ nguyên từ code của bạn)
+// ============================================================================
 string get_file_extension(CURL *curl, const string &url)
 {
-    // Thử lấy từ URL trước
     size_t last_dot = url.find_last_of(".");
     size_t last_slash = url.find_last_of("/");
     
     if (last_dot != string::npos && last_dot > last_slash)
     {
         string ext = url.substr(last_dot);
-        // Loại bỏ query parameters nếu có
         size_t query_pos = ext.find("?");
         if (query_pos != string::npos)
         {
@@ -41,7 +121,6 @@ string get_file_extension(CURL *curl, const string &url)
         return ext;
     }
     
-    // Nếu không có extension trong URL, thử lấy từ Content-Type
     char *content_type = nullptr;
     curl_easy_getinfo(curl, CURLINFO_CONTENT_TYPE, &content_type);
     
@@ -56,13 +135,12 @@ string get_file_extension(CURL *curl, const string &url)
         if (ct.find("video/mp4") != string::npos) return ".mp4";
         if (ct.find("application/json") != string::npos) return ".json";
         if (ct.find("application/xml") != string::npos) return ".xml";
+        if (ct.find("application/octet-stream") != string::npos) return ".bin";
     }
     
-    // Mặc định
     return ".dat";
 }
 
-// Hàm download file và lưu vào đĩa
 bool download_and_save_file(CURL *curl, const string &url, const string &save_path, string &actual_extension)
 {
     FILE *fp = fopen(save_path.c_str(), "wb");
@@ -82,7 +160,6 @@ bool download_and_save_file(CURL *curl, const string &url, const string &save_pa
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
     curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_2_0);
 
-    // Sử dụng callback để ghi vào file
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteFileCallback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
 
@@ -93,11 +170,10 @@ bool download_and_save_file(CURL *curl, const string &url, const string &save_pa
     if (res != CURLE_OK)
     {
         cerr << "Download failed: " << curl_easy_strerror(res) << endl;
-        remove(save_path.c_str()); // Xóa file lỗi
+        remove(save_path.c_str());
         return false;
     }
 
-    // Lấy extension thực tế từ server
     actual_extension = get_file_extension(curl, url);
     
     cout << "✓ File saved to: " << save_path << endl;
@@ -105,20 +181,17 @@ bool download_and_save_file(CURL *curl, const string &url, const string &save_pa
     return true;
 }
 
-// Hàm đo tốc độ download thực tế (giữ nguyên)
 double measure_download_speed(CURL *curl, const string &url, double &chunk_size)
 {
     string buffer;
     curl_easy_setopt(curl, CURLOPT_BUFFERSIZE, 102400L);
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-
     curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 1L);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "curl/7.91.0");
     curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 50L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
-
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
     curl_easy_setopt(curl, CURLOPT_FTP_SKIP_PASV_IP, 1L);
@@ -134,6 +207,7 @@ double measure_download_speed(CURL *curl, const string &url, double &chunk_size)
         cerr << "curl_easy_perform() failed: " << curl_easy_strerror(res) << endl;
         return -1.0;
     }
+    
     double download_speed_bps = 0.0;
     curl_easy_getinfo(curl, CURLINFO_SPEED_DOWNLOAD, &download_speed_bps);
 
@@ -144,7 +218,6 @@ double measure_download_speed(CURL *curl, const string &url, double &chunk_size)
     return bandwidth;
 }
 
-// Hàm tạo tất cả tổ hợp chunk
 void Combine_Chunk(int P, string combo, vector<string> &CHUNK_COMBO_OPTIONS)
 {
     if (combo.length() == P)
@@ -261,6 +334,9 @@ double mpc(vector<double> &past_bandwidth,
     return bit_rate;
 }
 
+// ============================================================================
+// Main Function - THÊM DECODE INTEGRATION
+// ============================================================================
 int main()
 {
     curl_global_init(CURL_GLOBAL_DEFAULT);
@@ -272,8 +348,9 @@ int main()
         return 1;
     }
 
-
-    string download_dir = "/home/backne/Trung/code/code_mpc/MPC_libcurl/download";
+    // Tạo thư mục nếu chưa có
+    create_directory(DOWNLOAD_DIR);
+    create_directory(DECODED_OUTPUT_DIR);
 
     string base_url = "https://100.66.2.42:8443/longdress_test2.bin";
     vector<string> quality_suffix = {"_low", "_medium", "_high"};
@@ -297,11 +374,14 @@ int main()
     int video_chunk_remain = 0;
     int total_segments = 10;
 
-    cout << "===== MPC Adaptive Bitrate Streaming (WITH FILE DOWNLOAD) =====" << endl;
-    cout << "Download directory: " << download_dir << endl;
+    cout << "===== MPC Adaptive Bitrate Streaming (WITH AUTO DECODE) =====" << endl;
+    cout << "Download directory: " << DOWNLOAD_DIR << endl;
+    cout << "Decoded output directory: " << DECODED_OUTPUT_DIR << endl;
     cout << "Lookahead: " << P << " chunks" << endl;
     cout << "Initial buffer: " << buffer_size << " seconds" << endl;
     cout << "Starting quality: " << last_quality << " (LOW)" << endl;
+    cout << "Decode mode: " << (DECODE_REALTIME ? "Real-time" : "Manual") << endl;
+    cout << "Decode background: " << (DECODE_BACKGROUND ? "Yes" : "No") << endl;
     cout << "Rebuffer penalty: 10.0" << endl << endl;
 
     for (int seg = 0; seg < total_segments; seg++)
@@ -323,7 +403,6 @@ int main()
                  << (next_quality + 1) * 5 << " Mbps)" << endl;
         }
 
-        // Lưu quality vào lịch sử
         quality_history.push_back(next_quality);
 
         cout << "Downloading: " << base_url << endl;
@@ -351,9 +430,9 @@ int main()
         
         past_bandwidth.push_back(measured_bandwidth);
 
-        // Download và lưu file với tên theo segment và quality
+        // Download và lưu file
         stringstream ss;
-        ss << download_dir << "/segment_" 
+        ss << DOWNLOAD_DIR << "/segment_" 
            << setfill('0') << setw(3) << (seg + 1)
            << "_" << quality_names[next_quality];
         string save_path_base = ss.str();
@@ -368,12 +447,19 @@ int main()
             string final_save_path = save_path_base + actual_extension;
             rename(temp_save_path.c_str(), final_save_path.c_str());
             
-            // Lấy kích thước file đã lưu
+            // Lấy kích thước file
             struct stat st;
             if (stat(final_save_path.c_str(), &st) == 0)
             {
                 cout << "File size: " << st.st_size / 1024.0 << " KB" << endl;
             }
+            
+            // ===== DECODE SEGMENT (THÊM MỚI) =====
+            if (DECODE_REALTIME)
+            {
+                decode_segment_async(final_save_path, seg + 1, quality_names[next_quality]);
+            }
+            // =====================================
         }
 
         // Cập nhật buffer
@@ -412,7 +498,6 @@ int main()
              << "%" << endl;
     }
     
-    // Thống kê phân bố quality
     cout << "\nQuality distribution:" << endl;
     map<int, int> quality_count;
     for (int q : quality_history) {
@@ -425,7 +510,17 @@ int main()
              << (pair.second * 100.0 / total_segments) << "%)" << endl;
     }
 
-    cout << "\n✓ All files saved to: " << download_dir << endl;
+    cout << "\n✓ All files saved to: " << DOWNLOAD_DIR << endl;
+    
+    if (DECODE_REALTIME)
+    {
+        cout << "✓ Decode processes " << (DECODE_BACKGROUND ? "running in background" : "completed") << endl;
+        cout << "  Check decoded files at: " << DECODED_OUTPUT_DIR << endl;
+    }
+    else
+    {
+        cout << "\n💡 To decode all segments, run: ./batch_decode_all.sh" << endl;
+    }
 
     return 0;
 }
