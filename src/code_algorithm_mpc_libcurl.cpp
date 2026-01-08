@@ -1,8 +1,9 @@
 #include <bits/stdc++.h>
 #include <curl/curl.h>
+#include <sys/stat.h>
 using namespace std;
 
-// Callback để ghi dữ liệu download vào buffer
+// Callback để ghi dữ liệu download vào buffer (cho đo bandwidth)
 size_t WriteCallback(void *contents, size_t size, size_t nmemb, void *userp)
 {
     size_t totalSize = size * nmemb;
@@ -11,7 +12,100 @@ size_t WriteCallback(void *contents, size_t size, size_t nmemb, void *userp)
     return totalSize;
 }
 
-// Hàm đo tốc độ download thực tế
+// Callback để ghi dữ liệu vào file
+size_t WriteFileCallback(void *contents, size_t size, size_t nmemb, void *userp)
+{
+    size_t totalSize = size * nmemb;
+    FILE *fp = (FILE *)userp;
+    return fwrite(contents, size, nmemb, fp);
+}
+
+
+
+// Hàm lấy extension từ URL hoặc Content-Type
+string get_file_extension(CURL *curl, const string &url)
+{
+    // Thử lấy từ URL trước
+    size_t last_dot = url.find_last_of(".");
+    size_t last_slash = url.find_last_of("/");
+    
+    if (last_dot != string::npos && last_dot > last_slash)
+    {
+        string ext = url.substr(last_dot);
+        // Loại bỏ query parameters nếu có
+        size_t query_pos = ext.find("?");
+        if (query_pos != string::npos)
+        {
+            ext = ext.substr(0, query_pos);
+        }
+        return ext;
+    }
+    
+    // Nếu không có extension trong URL, thử lấy từ Content-Type
+    char *content_type = nullptr;
+    curl_easy_getinfo(curl, CURLINFO_CONTENT_TYPE, &content_type);
+    
+    if (content_type)
+    {
+        string ct(content_type);
+        if (ct.find("text/plain") != string::npos) return ".txt";
+        if (ct.find("text/html") != string::npos) return ".html";
+        if (ct.find("application/pdf") != string::npos) return ".pdf";
+        if (ct.find("image/jpeg") != string::npos) return ".jpg";
+        if (ct.find("image/png") != string::npos) return ".png";
+        if (ct.find("video/mp4") != string::npos) return ".mp4";
+        if (ct.find("application/json") != string::npos) return ".json";
+        if (ct.find("application/xml") != string::npos) return ".xml";
+    }
+    
+    // Mặc định
+    return ".dat";
+}
+
+// Hàm download file và lưu vào đĩa
+bool download_and_save_file(CURL *curl, const string &url, const string &save_path, string &actual_extension)
+{
+    FILE *fp = fopen(save_path.c_str(), "wb");
+    if (!fp)
+    {
+        cerr << "Cannot open file for writing: " << save_path << endl;
+        return false;
+    }
+
+    curl_easy_setopt(curl, CURLOPT_BUFFERSIZE, 102400L);
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 1L);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "curl/7.91.0");
+    curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 50L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
+    curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_2_0);
+
+    // Sử dụng callback để ghi vào file
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteFileCallback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
+
+    CURLcode res = curl_easy_perform(curl);
+    
+    fclose(fp);
+
+    if (res != CURLE_OK)
+    {
+        cerr << "Download failed: " << curl_easy_strerror(res) << endl;
+        remove(save_path.c_str()); // Xóa file lỗi
+        return false;
+    }
+
+    // Lấy extension thực tế từ server
+    actual_extension = get_file_extension(curl, url);
+    
+    cout << "✓ File saved to: " << save_path << endl;
+    cout << "  Detected format: " << actual_extension << endl;
+    return true;
+}
+
+// Hàm đo tốc độ download thực tế (giữ nguyên)
 double measure_download_speed(CURL *curl, const string &url, double &chunk_size)
 {
     string buffer;
@@ -23,7 +117,7 @@ double measure_download_speed(CURL *curl, const string &url, double &chunk_size)
     curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 50L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
 
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
@@ -44,8 +138,8 @@ double measure_download_speed(CURL *curl, const string &url, double &chunk_size)
     curl_easy_getinfo(curl, CURLINFO_SPEED_DOWNLOAD, &download_speed_bps);
 
     double download_time = chrono::duration<double>(end - start).count();
-    chunk_size = buffer.size() / 1000.0;                 // KB
-    double bandwidth = (chunk_size * 8) / download_time; // kbps
+    chunk_size = buffer.size() / 1000.0;
+    double bandwidth = (chunk_size * 8) / download_time;
 
     return bandwidth;
 }
@@ -70,12 +164,11 @@ double mpc(vector<double> &past_bandwidth,
            vector<double> &past_bandwidth_ests,
            vector<double> &past_errors,
            vector<double> &all_future_chunks_size,
-           int P,
+           int P, 
            double buffer_size,
            int video_chunk_remain,
            int last_quality)
 {
-    // Tính error hiện tại
     double curr_error = 0.0;
     if (!past_bandwidth_ests.empty() && !past_bandwidth.empty())
     {
@@ -84,7 +177,6 @@ double mpc(vector<double> &past_bandwidth,
     }
     past_errors.push_back(curr_error);
 
-    // Harmonic mean của 5 mẫu băng thông gần nhất
     int use_sample = min((int)past_bandwidth.size(), 5);
     double bandwidth_sum = 0.0;
     for (int i = past_bandwidth.size() - use_sample; i < past_bandwidth.size(); i++)
@@ -93,7 +185,6 @@ double mpc(vector<double> &past_bandwidth,
     }
     double harmonic_bandwidth = use_sample / bandwidth_sum;
 
-    // Lấy max error từ 5 lần dự đoán gần nhất
     int error_sample = min((int)past_errors.size(), 5);
     double max_error = 0.0;
     if (error_sample > 0)
@@ -102,16 +193,13 @@ double mpc(vector<double> &past_bandwidth,
         max_error = *max_element(start, past_errors.end());
     }
 
-    // Dự đoán băng thông tương lai (conservative estimate)
     double future_bandwidth = harmonic_bandwidth / (1.0 + max_error);
     future_bandwidth = max(future_bandwidth, 1e-6);
     past_bandwidth_ests.push_back(future_bandwidth);
 
-    // ===== THAY ĐỔI 1: Thêm debug log =====
     cout << "[MPC Debug] Future bandwidth estimate: " << future_bandwidth << " kbps" << endl;
     cout << "[MPC Debug] Current buffer: " << buffer_size << " seconds" << endl;
 
-    // Tạo tất cả combo
     vector<string> CHUNK_COMBO_OPTIONS;
     Combine_Chunk(P, "", CHUNK_COMBO_OPTIONS);
 
@@ -119,7 +207,6 @@ double mpc(vector<double> &past_bandwidth,
     string best_combo = "";
     double start_buffer = buffer_size;
 
-    // Thử tất cả combo để tìm reward tối ưu
     for (const string &chunk_combo : CHUNK_COMBO_OPTIONS)
     {
         double curr_rebuffer_time = 0.0;
@@ -148,14 +235,13 @@ double mpc(vector<double> &past_bandwidth,
                 curr_buffer -= download_time;
             }
 
-            curr_buffer += 1.0;                       // chunk duration = 1 giây
-            bitrate_sum += (chunk_quality + 1) * 5.0; // 5, 10, 15 Mbps
+            curr_buffer += 1.0;
+            bitrate_sum += (chunk_quality + 1) * 5.0;
             smoothness_dif += abs(chunk_quality - tmp_last_quality) * 5.0;
 
             tmp_last_quality = chunk_quality;
         }
 
-        // ===== THAY ĐỔI 2: Tăng hệ số phạt rebuffering từ 4.3 lên 10.0 =====
         double reward = bitrate_sum / 1000.0 - 10.0 * curr_rebuffer_time - smoothness_dif / 1000.0;
 
         if (reward > max_reward)
@@ -165,7 +251,6 @@ double mpc(vector<double> &past_bandwidth,
         }
     }
 
-    // ===== THAY ĐỔI 3: Thêm debug log cho kết quả =====
     cout << "[MPC Debug] Best combo: " << best_combo << " (reward: " << max_reward << ")" << endl;
 
     int bit_rate = last_quality;
@@ -178,7 +263,6 @@ double mpc(vector<double> &past_bandwidth,
 
 int main()
 {
-    // Khởi tạo CURL
     curl_global_init(CURL_GLOBAL_DEFAULT);
     CURL *curl = curl_easy_init();
 
@@ -188,42 +272,37 @@ int main()
         return 1;
     }
 
-    // Cấu hình streaming
-    string base_url = "https://192.168.137.2:8443/hello.sh";
-    vector<string> quality_suffix = {"_low.mp4", "_medium.mp4", "_high.mp4"};
 
-    // ===== THAY ĐỔI 4: Băng thông khởi tạo để trống =====
-    vector<double> past_bandwidth; // Sẽ được thêm sau lần đo đầu tiên
+    string download_dir = "/home/backne/Trung/code/code_mpc/MPC_libcurl/download";
+
+    string base_url = "https://100.66.2.42:8443/longdress_test2.bin";
+    vector<string> quality_suffix = {"_low", "_medium", "_high"};
+    vector<string> quality_names = {"LOW", "MEDIUM", "HIGH"};
+
+    vector<double> past_bandwidth;
     vector<double> past_bandwidth_ests;
     vector<double> past_errors;
+    vector<int> quality_history; 
     
-    // ===== THAY ĐỔI 5: Kích thước chunks thực tế theo quality =====
-    // Low: 5 Mbps * 1s / 8 = 625 KB
-    // Medium: 10 Mbps * 1s / 8 = 1250 KB
-    // High: 15 Mbps * 1s / 8 = 1875 KB
     vector<double> all_future_chunks_size;
     for (int i = 0; i < 100; i++) {
-        all_future_chunks_size.push_back(625.0);   // low quality
-        all_future_chunks_size.push_back(1250.0);  // medium quality
-        all_future_chunks_size.push_back(1875.0);  // high quality
+        all_future_chunks_size.push_back(625.0);
+        all_future_chunks_size.push_back(1250.0);
+        all_future_chunks_size.push_back(1875.0);
     }
 
-    int P = 5;                // lookahead horizon
-    
-    // ===== THAY ĐỔI 6: Buffer khởi tạo nhỏ hơn =====
-    double buffer_size = 1.0; // Giảm từ 3.0 xuống 1.0 giây
-    
-    // ===== THAY ĐỔI 7: Bắt đầu từ quality thấp =====
-    int last_quality = 0;     // Thay đổi từ 1 (medium) xuống 0 (low)
-    
+    int P = 5;
+    double buffer_size = 1.0;
+    int last_quality = 0;
     int video_chunk_remain = 0;
-    int total_segments = 20; // tổng số segment cần tải
+    int total_segments = 10;
 
-    cout << "===== MPC Adaptive Bitrate Streaming (IMPROVED) =====" << endl;
+    cout << "===== MPC Adaptive Bitrate Streaming (WITH FILE DOWNLOAD) =====" << endl;
+    cout << "Download directory: " << download_dir << endl;
     cout << "Lookahead: " << P << " chunks" << endl;
     cout << "Initial buffer: " << buffer_size << " seconds" << endl;
     cout << "Starting quality: " << last_quality << " (LOW)" << endl;
-    cout << "Rebuffer penalty: 10.0 (increased from 4.3)" << endl << endl;
+    cout << "Rebuffer penalty: 10.0" << endl << endl;
 
     for (int seg = 0; seg < total_segments; seg++)
     {
@@ -231,24 +310,25 @@ int main()
 
         int next_quality;
         
-        // ===== THAY ĐỔI 8: Xử lý đặc biệt cho chunk đầu tiên =====
         if (past_bandwidth.empty()) {
-            // Lần đầu tiên, bắt buộc dùng low quality để đo bandwidth
             next_quality = 0;
             cout << "First chunk: using LOW quality to measure bandwidth" << endl;
         } else {
-            // Gọi MPC để quyết định quality cho chunk tiếp theo
             next_quality = (int)mpc(past_bandwidth, past_bandwidth_ests, past_errors,
                                     all_future_chunks_size, P, buffer_size,
                                     video_chunk_remain, last_quality);
             
             cout << "MPC Decision: Quality " << next_quality
-                 << " (" << (next_quality + 1) * 5 << " Mbps)" << endl;
+                 << " (" << quality_names[next_quality] << " - " 
+                 << (next_quality + 1) * 5 << " Mbps)" << endl;
         }
+
+        // Lưu quality vào lịch sử
+        quality_history.push_back(next_quality);
 
         cout << "Downloading: " << base_url << endl;
         
-        // Download chunk và đo băng thông thực tế
+        // Đo bandwidth
         double chunk_size_kb;
         double measured_bandwidth = measure_download_speed(curl, base_url, chunk_size_kb);
 
@@ -271,13 +351,37 @@ int main()
         
         past_bandwidth.push_back(measured_bandwidth);
 
-        // Cập nhật buffer (giả định chunk duration = 1s)
+        // Download và lưu file với tên theo segment và quality
+        stringstream ss;
+        ss << download_dir << "/segment_" 
+           << setfill('0') << setw(3) << (seg + 1)
+           << "_" << quality_names[next_quality];
+        string save_path_base = ss.str();
+        
+        cout << "Saving file..." << endl;
+        string actual_extension;
+        string temp_save_path = save_path_base + ".tmp";
+        
+        if (download_and_save_file(curl, base_url, temp_save_path, actual_extension))
+        {
+            // Đổi tên file với extension đúng
+            string final_save_path = save_path_base + actual_extension;
+            rename(temp_save_path.c_str(), final_save_path.c_str());
+            
+            // Lấy kích thước file đã lưu
+            struct stat st;
+            if (stat(final_save_path.c_str(), &st) == 0)
+            {
+                cout << "File size: " << st.st_size / 1024.0 << " KB" << endl;
+            }
+        }
+
+        // Cập nhật buffer
         double download_time = chunk_size_kb * 8 / measured_bandwidth;
         buffer_size = max(0.0, buffer_size - download_time) + 1.0;
         cout << "Download time: " << download_time << " seconds" << endl;
         cout << "Buffer level: " << buffer_size << " seconds" << endl;
 
-        // In thông tin dự đoán
         if (!past_bandwidth_ests.empty())
         {
             cout << "Bandwidth estimate: " << past_bandwidth_ests.back() << " kbps" << endl;
@@ -287,14 +391,12 @@ int main()
             cout << "Prediction error: " << past_errors.back() * 100 << "%" << endl;
         }
 
-        // Cập nhật state
         video_chunk_remain++;
         last_quality = next_quality;
 
         cout << endl;
     }
 
-    // Cleanup
     curl_easy_cleanup(curl);
     curl_global_cleanup();
 
@@ -310,14 +412,20 @@ int main()
              << "%" << endl;
     }
     
-    // ===== THAY ĐỔI 9: Thống kê phân bố quality =====
+    // Thống kê phân bố quality
     cout << "\nQuality distribution:" << endl;
     map<int, int> quality_count;
-    // Đếm từ segment thứ 2 trở đi (bỏ qua segment đầu tiên)
-    for (int i = 1; i < total_segments; i++) {
-        // Cần lưu lại last_quality trong quá trình chạy để thống kê chính xác
-        // Đây chỉ là ví dụ minh họa
+    for (int q : quality_history) {
+        quality_count[q]++;
     }
+    
+    for (auto &pair : quality_count) {
+        cout << "  " << quality_names[pair.first] << ": " 
+             << pair.second << " segments (" 
+             << (pair.second * 100.0 / total_segments) << "%)" << endl;
+    }
+
+    cout << "\n✓ All files saved to: " << download_dir << endl;
 
     return 0;
 }
