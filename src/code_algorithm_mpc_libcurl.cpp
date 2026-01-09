@@ -56,7 +56,7 @@ bool create_directory(const string &path)
 bool decode_segment_async(const string &bin_file_path, int segment_num, const string &quality_name)
 {
     cout << "\n┌─────────────────────────────────────────┐" << endl;
-    cout << "│  Starting Decode Process               │" << endl;
+    cout << "│  Starting Decode Process                │" << endl;
     cout << "└─────────────────────────────────────────┘" << endl;
     
     if (!file_exists(bin_file_path))
@@ -71,22 +71,30 @@ bool decode_segment_async(const string &bin_file_path, int segment_num, const st
     cout << "📥 Input:  " << bin_file_path << endl;
     cout << "🔧 Running decode script..." << endl;
     
-    // Tạo command gọi script decode
+    // Tạo log file name với padding
+    stringstream log_filename;
+    log_filename << DECODED_OUTPUT_DIR << "/decode_segment_" 
+                 << setfill('0') << setw(3) << segment_num << ".log";
+    string log_file = log_filename.str();
+    
+    // Tạo command gọi script decode - Dùng đường dẫn tuyệt đối
     stringstream cmd;
-    cmd << "./auto_decode.sh"
-        << " \"" << bin_file_path << "\""
+    cmd << "bash /home/backne/Trung/code/code_mpc/MPC_libcurl/auto_decode.sh" 
+        << " " << bin_file_path
         << " " << segment_num
-        << " \"" << quality_name << "\"";
+        << " " << quality_name;
     
     if (DECODE_BACKGROUND)
     {
-        cmd << " > " << DECODED_OUTPUT_DIR << "/decode_segment_" << segment_num << ".log 2>&1 &";
+        cmd << " > " << log_file << " 2>&1 &";
         cout << "   (Background mode)" << endl;
     }
     else
     {
-        cmd << " 2>&1 | tee " << DECODED_OUTPUT_DIR << "/decode_segment_" << segment_num << ".log";
+        cmd << " 2>&1 | tee " << log_file;
     }
+    
+    cout << "📝 Command: " << cmd.str() << endl;  // Debug: in ra command để kiểm tra
     
     int result = system(cmd.str().c_str());
     
@@ -101,7 +109,6 @@ bool decode_segment_async(const string &bin_file_path, int segment_num, const st
         return false;
     }
 }
-
 // ============================================================================
 // Original Functions (Giữ nguyên từ code của bạn)
 // ============================================================================

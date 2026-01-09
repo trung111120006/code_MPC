@@ -77,6 +77,6 @@ add_custom_command(TARGET mpc_streaming POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E echo "Make sure to:"
     COMMAND ${CMAKE_COMMAND} -E echo "1. Update paths in src/code_algorithm_mpc_libcurl.cpp"
     COMMAND ${CMAKE_COMMAND} -E echo "2. Update paths in auto_decode.sh"
-    COMMAND ${CMAKE_COMMAND} -E echo "3. chmod +x auto_decode.sh batch_decode_all.sh"
+    COMMAND ${CMAKE_COMMAND} -E echo "3. bash ./auto_decode.sh ./download/segment_003_HIGH.bin"
     COMMAND ${CMAKE_COMMAND} -E echo "========================================="
 )
