@@ -7,4 +7,5 @@
 Đầu tiên, cần clone project về máy:
 
 ```bash
-git clone https://github.com/trung111120006/code_MPC/tree/master
+git clone https://github.com/trung111120006/MPC_libcurl
+
