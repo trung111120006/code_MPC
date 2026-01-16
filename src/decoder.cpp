@@ -19,12 +19,12 @@ namespace Decoder {
         std::cout << "└─────────────────────────────────────────┘" << std::endl;
         
         if (!FileUtils::exists(binFilePath)) {
-            std::cerr << "❌ Error: Binary file not found: " << binFilePath << std::endl;
+            std::cerr << "Error: Binary file not found: " << binFilePath << std::endl;
             return false;
         }
         
         if (!checkDecodeScript()) {
-            std::cerr << "❌ Error: Decode script not found: " 
+            std::cerr << "Error: Decode script not found: " 
                       << Config::DECODE_SCRIPT_PATH << std::endl;
             return false;
         }
